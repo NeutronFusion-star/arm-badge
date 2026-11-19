@@ -212,7 +212,7 @@ async function loadStatusNow() {
     $("sStore").textContent = s.fs_total ? `${Math.round(s.fs_used / 1024)} KB of ${(s.fs_total / 1048576).toFixed(1)} MB` : "-";
     $("sPower").textContent = (s.usb ? "USB connected" : "Battery") + (s.battery == null ? " · level not measured" : ` · ${s.battery}%`);
     $("sFw").textContent = s.fw;
-    $("sBoot").textContent = s.start ? s.start + ((s.brownouts || s.freezes) ? ` · ${s.brownouts} low-battery, ${s.freezes} freeze restarts so far` : "") : "needs firmware v7.3";
+    $("sBoot").textContent = s.start ? s.start + (s.stuck ? ` (stuck at: ${s.stuck})` : "") + ((s.brownouts || s.freezes) ? ` · ${s.brownouts} low-battery, ${s.freezes} freeze restarts so far` : "") : "needs firmware v7.3";
     pick("segSleep", s.settings.sleep); pick("segStart", s.settings.start); $("sleepBadge").checked = s.settings.sleepBadge;
   } catch (e) { chip($("conn"), e.message, "bad"); }
 }
