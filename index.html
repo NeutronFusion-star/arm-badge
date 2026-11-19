@@ -93,6 +93,7 @@ dt { color: var(--muted); } dd { margin: 0; font-family: var(--mono); font-size:
       <dt>Storage</dt><dd id="sStore">–</dd>
       <dt>Power</dt><dd id="sPower">–</dd>
       <dt>Firmware</dt><dd id="sFw">–</dd>
+      <dt>Last start</dt><dd id="sBoot">–</dd>
     </dl>
   </section>
 
@@ -114,6 +115,8 @@ dt { color: var(--muted); } dd { margin: 0; font-family: var(--mono); font-size:
     <label class="toggle"><span><b>Show badge while asleep</b><br><small class="hint">Draws your colour badge before sleeping.</small></span>
       <input type="checkbox" id="sleepBadge" checked></label>
     <div class="row"><button class="primary" id="save">Save settings</button><span class="chip" id="saveState" hidden></span></div>
+    <div class="row"><button id="restart">Restart badge</button><span class="chip" id="restartState" hidden></span></div>
+    <small>Restart works like the reset button inside the case. On the badge itself: hold Home + Select for 3 seconds.</small>
   </section>
 
   <section class="card locked" id="sendCard" aria-labelledby="h-send">
@@ -209,6 +212,7 @@ async function loadStatusNow() {
     $("sStore").textContent = s.fs_total ? `${Math.round(s.fs_used / 1024)} KB of ${(s.fs_total / 1048576).toFixed(1)} MB` : "-";
     $("sPower").textContent = (s.usb ? "USB connected" : "Battery") + (s.battery == null ? " · level not measured" : ` · ${s.battery}%`);
     $("sFw").textContent = s.fw;
+    $("sBoot").textContent = s.start ? s.start + ((s.brownouts || s.freezes) ? ` · ${s.brownouts} low-battery, ${s.freezes} freeze restarts so far` : "") : "needs firmware v7.3";
     pick("segSleep", s.settings.sleep); pick("segStart", s.settings.start); $("sleepBadge").checked = s.settings.sleepBadge;
   } catch (e) { chip($("conn"), e.message, "bad"); }
 }
@@ -220,6 +224,15 @@ $("save").onclick = async () => {
   const body = JSON.stringify({ sleep: +picked("segSleep"), start: picked("segStart"), sleepBadge: $("sleepBadge").checked });
   try { const r = await ask("SET " + body, ["OK SET", "ERR"]); r.startsWith("OK") ? chip($("saveState"), "Saved", "ok") : chip($("saveState"), r.slice(4), "bad"); }
   catch (e) { chip($("saveState"), e.message, "bad"); }
+};
+
+$("restart").onclick = async () => {
+  if (busy || !rx) return;
+  await statusRun;
+  try {
+    const r = await ask("RESTART", ["OK RESTART", "ERR"]);
+    r.startsWith("OK") ? chip($("restartState"), "Restarting... reconnect in 20 s", "ok") : chip($("restartState"), "Needs firmware v7.3", "bad");
+  } catch (e) { chip($("restartState"), e.message, "bad"); }
 };
 
 $("file").onchange = async () => {
