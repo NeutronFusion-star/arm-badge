@@ -160,7 +160,7 @@ function onMessage(msg) {
 function waitFor(prefixes, ms) {
   return new Promise((resolve, reject) => {
     const w = { prefixes, resolve };
-    w.t = setTimeout(() => { waiters = waiters.filter(x => x !== w); reject(new Error("The badge didn't answer. Is it awake?")); }, ms);
+    w.t = setTimeout(() => { waiters = waiters.filter(x => x !== w); reject(new Error("The badge didn't answer. Wake it with a button, wait for the screen to finish, then try again.")); }, ms);
     waiters.push(w);
   });
 }
@@ -175,7 +175,7 @@ async function retry(fn, tries = 5) {
   }
 }
 const write = b => gattQueue(() => retry(() => rx.writeValueWithResponse ? rx.writeValueWithResponse(b) : rx.writeValue(b)));
-async function ask(cmd, prefixes, ms = 6000) { const p = waitFor(prefixes, ms); await write(new TextEncoder().encode(cmd)); return p; }
+async function ask(cmd, prefixes, ms = 20000) { const p = waitFor(prefixes, ms); await write(new TextEncoder().encode(cmd)); return p; }
 
 let dev = null;
 $("connect").onclick = async () => {
@@ -239,10 +239,11 @@ $("send").onclick = async () => {
   busy = true; refreshSend(); $("result").textContent = ""; $("result").className = "result"; $("bar").style.width = "0";
   const total = packet.length, CH = 480;
   try {
-    const r = await ask("ARM1 " + total + "\n", ["READY", "ERR"], 8000);
+    const r = await ask("ARM1 " + total + "\n", ["READY", "ERR"], 20000);
     if (r.startsWith("ERR")) throw new Error(r.slice(4));
     for (let o = 0; o < total; o += CH) { await write(packet.subarray(o, o + CH)); $("bar").style.width = (100 * Math.min(o + CH, total) / total) + "%"; }
-    const a = await waitFor(["OK", "ERR"], 30000);
+    $("result").textContent = "All sent. The badge is saving...";
+    const a = await waitFor(["OK", "ERR"], 90000);
     if (a.startsWith("ERR")) throw new Error(a.slice(4));
     const [, n, u, s, t] = a.split(" ");
     $("bar").style.width = "100%"; $("result").className = "result ok"; $("result").textContent = `Loaded: ${n} new, ${u} updated, ${s} unchanged · ${t} MOs`;
