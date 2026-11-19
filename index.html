@@ -164,17 +164,30 @@ function waitFor(prefixes, ms) {
     waiters.push(w);
   });
 }
-const write = b => rx.writeValueWithResponse ? rx.writeValueWithResponse(b) : rx.writeValue(b);
+// Android allows one Bluetooth operation at a time: every operation goes through one queue,
+// and a "GATT operation already in progress" error is retried after a short pause.
+let gattChain = Promise.resolve();
+function gattQueue(fn) { const p = gattChain.then(fn, fn); gattChain = p.catch(() => {}); return p; }
+async function retry(fn, tries = 5) {
+  for (let i = 0; ; i++) {
+    try { return await fn(); }
+    catch (e) { if (i >= tries || !/in progress|busy/i.test(e.message)) throw e; await new Promise(r => setTimeout(r, 150 * (i + 1))); }
+  }
+}
+const write = b => gattQueue(() => retry(() => rx.writeValueWithResponse ? rx.writeValueWithResponse(b) : rx.writeValue(b)));
 async function ask(cmd, prefixes, ms = 6000) { const p = waitFor(prefixes, ms); await write(new TextEncoder().encode(cmd)); return p; }
 
+let dev = null;
 $("connect").onclick = async () => {
   try {
-    const dev = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: "ARM" }], optionalServices: [NUS] });
+    if (dev && dev.gatt.connected) dev.gatt.disconnect();          // Reconnect: drop the old link first
+    waiters.forEach(w => clearTimeout(w.t)); waiters = []; gattChain = Promise.resolve();
+    dev = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: "ARM" }], optionalServices: [NUS] });
     chip($("conn"), "Connecting...");
     dev.addEventListener("gattserverdisconnected", () => { rx = tx = null; chip($("conn"), "Disconnected", "bad"); $("connect").textContent = "Connect"; lock(true); });
     const svc = await (await dev.gatt.connect()).getPrimaryService(NUS);
     rx = await svc.getCharacteristic(RX); tx = await svc.getCharacteristic(TX);
-    await tx.startNotifications();
+    await retry(() => tx.startNotifications());
     tx.addEventListener("characteristicvaluechanged", e => onMessage(new TextDecoder().decode(e.target.value)));
     chip($("conn"), "Connected", "ok"); $("connect").textContent = "Reconnect"; $("help").hidden = true;
     lock(false); await loadStatus();
@@ -185,7 +198,9 @@ function pick(seg, v) { [...$(seg).children].forEach(b => b.setAttribute("aria-p
 function picked(seg) { return [...$(seg).children].find(b => b.getAttribute("aria-pressed") === "true").dataset.v; }
 ["segSleep", "segStart"].forEach(id => $(id).addEventListener("click", e => { if (e.target.dataset.v) pick(id, e.target.dataset.v); }));
 
-async function loadStatus() {
+let statusRun = null;
+function loadStatus() { if (!statusRun) statusRun = loadStatusNow().finally(() => statusRun = null); return statusRun; }
+async function loadStatusNow() {
   try {
     const s = JSON.parse((await ask("STAT", ["STAT "])).slice(5));
     $("sMos").textContent = s.mos; $("sMonth").textContent = s.month || "no month";
@@ -197,9 +212,11 @@ async function loadStatus() {
     pick("segSleep", s.settings.sleep); pick("segStart", s.settings.start); $("sleepBadge").checked = s.settings.sleepBadge;
   } catch (e) { chip($("conn"), e.message, "bad"); }
 }
-$("refresh").onclick = loadStatus;
+$("refresh").onclick = () => { if (!busy && rx) loadStatus(); };
 
 $("save").onclick = async () => {
+  if (busy || !rx) return;
+  await statusRun;
   const body = JSON.stringify({ sleep: +picked("segSleep"), start: picked("segStart"), sleepBadge: $("sleepBadge").checked });
   try { const r = await ask("SET " + body, ["OK SET", "ERR"]); r.startsWith("OK") ? chip($("saveState"), "Saved", "ok") : chip($("saveState"), r.slice(4), "bad"); }
   catch (e) { chip($("saveState"), e.message, "bad"); }
@@ -218,6 +235,7 @@ $("file").onchange = async () => {
 };
 
 $("send").onclick = async () => {
+  await statusRun;
   busy = true; refreshSend(); $("result").textContent = ""; $("result").className = "result"; $("bar").style.width = "0";
   const total = packet.length, CH = 480;
   try {
